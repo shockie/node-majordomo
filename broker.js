@@ -68,8 +68,24 @@ Broker.prototype.findServiceBySender = function(sender){
 	return knownService;
 };
 
+Broker.prototype.findIndexBySenderService = function(sender, service){
+	var knownIndex = -1;
+	this.services[service].forEach(function(worker, index){
+		console.log('LOOPING SERVICE');
+		console.log(worker.toString() == sender.toString());
+		if(worker.toString() == sender.toString()){
+			knownIndex = index;
+		}
+	});
+	return knownIndex;
+};
+
 Broker.prototype.onWorkerDisconnect = function(message){
-	var service = this.findServiceBySender(message.envelope);
+	var service = this.findServiceBySender(message.envelope),
+		index = this.findIndexBySenderService(message.envelope, service);
+
+	this.services[service].splice(index);
+
 
 	//indexOf quirks
 	// var index = this.services[services];
@@ -99,6 +115,32 @@ Broker.prototype.onMessage = function(envelope, protocol, type) {
 	}
 };
 
+Broker.prototype.disconnectWorker = function(envelope){
+	this.socket.send(new messages.worker.DisconnectMessage(envelope).toFrames());
+};
+
+Broker.prototype.disconnect = function(){
+	console.log('disconnecting workers');
+	if(!Object.keys(this.services).length){
+		return;
+	}
+	//loop over all known workers and send a disconnect to them
+	Object.keys(this.services).forEach(function(service){
+		if(!this.services[service].length){
+			return;
+		}
+
+		this.services[service].forEach(function(worker){
+			this.disconnectWorker(worker);
+		}, this);
+	}, this);
+};
+
 if(require.main){
 	var broker = new Broker('tcp://127.0.0.1:5555');
+
+	process.on('SIGINT', function(){
+		broker.disconnect();
+		process.exit();
+	});
 }

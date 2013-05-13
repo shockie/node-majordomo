@@ -28,7 +28,7 @@ Worker.prototype.onMessage = function(){
 
 Worker.prototype.onDisconnect = function(message){
 	console.log('received disconnect request');
-	this.socket.disconnect();
+	this.socket.disconnect(this.socket.last_endpoint);
 	this.connected = false;
 };
 
@@ -50,6 +50,8 @@ Worker.prototype.ready = function(){
 
 Worker.prototype.disconnect = function(){
 	this.socket.send(new messages.worker.DisconnectMessage().toFrames());
+	this.socket.disconnect(this.socket.last_endpoint);
+	this.connected = false;
 	//notify the broker to remove this worker from the pool
 };
 

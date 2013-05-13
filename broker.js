@@ -9,153 +9,96 @@ var util = require('util'),
 
 var Broker = function(endpoint){
 	events.EventEmitter.call(this);
-
-	this.socket = router;
 	this.services = {};
 	this.waiting = [];
-	router.bindSync(endpoint);
 
-	router.on('message', this.onMessage.bind(this));
+	this.socket = zmq.socket('router');
+	this.socket.bindSync(endpoint);
+	this.socket.on('message', this.onMessage.bind(this));
 };
 
 util.inherits(Broker, events.EventEmitter);
 
 
-Broker.prototype.onClientMessage = function(envelope, type, service, data){
-	console.log('client message');
-	if(this.services.hasOwnProperty(service.toString()) != -1){
-		//lookup a valid worker
-		var worker = this.services[service.toString()].pop();
-		console.log('go to worker: %s, total workers: %s', worker.toString(), this.services[service.toString()].length);
-
-		this.socket.send([
-			worker,
-			'MDPW02',
-			messages.worker.request,
-			envelope,
-			'',
-			Buffer.concat(data)
-		]);
-
-		this.services[service.toString()].unshift(worker);
-	}
-};
-
-Broker.prototype.onWorkerMessage = function(envelope, type, service, data){
-	if(type == messages.worker.READY){
-		this.onWorkerReady.call(this, envelope, service);
-	}else{
-		console.log('no match');
-	}
-};
-
-Broker.prototype.onClientToWorkerMessage = function(envelope, type, client, data){
-	//FIXME: a reference to the service name
-	this.socket.send([
-		client,
-		'MDPC02',
-		messages.client.FINAL,
-		'blocks:http-request',
-		data
-	]);
-};
-
-Broker.prototype.onWorkerReady = function(envelope, service){
+Broker.prototype.onWorkerReady = function(message, envelope){
 	console.log('Worker registers itself');
-	if(!this.services.hasOwnProperty(service.toString())){
-		console.log("broker doesn't yet understand %s", service.toString());
-		this.services[service.toString()] = [];
+	if(!this.services.hasOwnProperty(message.service.toString())){
+		console.log("broker doesn't yet understand %s", message.service.toString());
+		this.services[message.service.toString()] = [];
 	}
-	// if(this.services[service.toString()].indexOf(envelope) == -1){
-		this.services[service.toString()].push(envelope);
-	// }
+
+	this.services[message.service.toString()].push(message.envelope);
 };
 
+Broker.prototype.onClientRequest = function(message){
+	console.log('client message');
+	if(this.services.hasOwnProperty(message.service.toString()) && this.services[message.service.toString()].length){
+		//lookup a valid worker
+		var worker = this.services[message.service.toString()].pop();
+		console.log('go to worker: %s, total idle workers: %s', worker.toString(), this.services[message.service.toString()].length);
+		this.socket.send(new messages.worker.RequestMessage(message.envelope, message.data, worker).toFrames());
+		this.services[message.service.toString()].unshift(worker);
+	}
+};
+
+Broker.prototype.onWorkerFinal = function(message){
+	//worker lookup by envelope
+	var service = this.findServiceBySender(message.envelope);
+	this.socket.send(new messages.client.FinalMessage(service, message.data, message.service).toFrames());
+};
+
+Broker.prototype.onWorkerPartial = function(message){
+	//worker lookup by envelope
+	var service = this.findServiceBySender(message.envelope);
+	this.socket.send(new messages.client.PartialMessage(service, message.data, message.service).toFrames());
+};
+
+Broker.prototype.findServiceBySender = function(sender){
+	var knownService;
+
+	Object.keys(this.services).forEach(function(service){
+		if(this.services[service].some(function(worker){
+			return sender.toString() == worker.toString();
+		})){
+			knownService = service;
+		}
+		return;
+	}, this);
+
+	return knownService;
+};
+
+Broker.prototype.onWorkerDisconnect = function(message){
+	var service = this.findServiceBySender(message.envelope);
+
+	//indexOf quirks
+	// var index = this.services[services];
+
+	//splice the service array;
+	//done
+};
 
 Broker.prototype.onMessage = function(envelope, protocol, type) {
-	var args = Array.prototype.slice.call(arguments);
-	data = Array.prototype.slice.call(arguments, 4);
-	if(protocol == 'MDPW02'){
-		if(args.length > 5){
-			//this mean we have a zero-byte delimeted(partial,final) message
-			this.onClientToWorkerMessage.call(this, envelope, type, args[3], args.slice(5));
-		}else{
-			this.onWorkerMessage.call(this, envelope, type, args[3]);
+	var message = messages.fromFrames(arguments, true);
+
+	if(message instanceof messages.client.Message){
+		if(message instanceof messages.client.RequestMessage){
+			this.onClientRequest(message);
 		}
-	}else if(protocol == 'MDPC02'){
-		// this is a message from a client
-		console.log(Buffer.concat(args).toString(), args[3].toString());
-		this.onClientMessage.call(this, envelope, type, args[3], data);
+	}else if(message instanceof messages.worker.Message){
+		//
+		if(message instanceof messages.worker.ReadyMessage){
+			this.onWorkerReady(message, envelope);
+		} else if(message instanceof messages.worker.PartialMessage){
+			this.onWorkerPartial(message);
+		} else if(message instanceof messages.worker.FinalMessage){
+			this.onWorkerFinal(message);
+		} else if(message instanceof messages.worker.DisconnectMessage){
+			this.onWorkerDisconnect(message);
+		}
 	}
 };
 
 if(require.main){
 	var broker = new Broker('tcp://127.0.0.1:5555');
 }
-
-// var client = redis.createClient();
-
-
-// clientRouter.bindSync('tcp://127.0.0.1:5555');
-// workerRouter.bindSync('tcp://127.0.0.1:6666');
-
-// workerRouter.messages = {
-// 	ready: 0x01,
-// 	request: 0x02,
-// 	partial: 0x03,
-// 	final: 0x04,
-// 	heartbeat: 0x05,
-// 	disconnect: 0x06
-// };
-
-// //we need a lookup table
-
-
-// clientRouter.on('message', function(envelope, protocol, type, service, data){
-// 	client.lrange(service, 0, -1, function(err, workers){
-// 		var message =[
-// 			new Buffer(workers[0]),
-// 			'MDPW02',
-// 			workerRouter.messages.request,
-// 			envelope,
-// 			''];
-
-// 		console.log(message.concat(Array.prototype.slice.call(arguments, 4)));
-// 		workerRouter.send(message.concat(Array.prototype.slice.call(arguments, 4)));
-// 	// 	console.log(workers);
-
-// 	// 	clientRouter.send([
-// 	// 		envelope,
-// 	// 		'MDPC02',
-// 	// 		0x02,
-// 	// 		service,
-// 	// 		JSON.stringify({headers: [], status:200, body: ''})
-// 	// 	]);
-
-// 	// 	clientRouter.send([
-// 	// 		envelope,
-// 	// 		'MDPC02',
-// 	// 		0x03,
-// 	// 		service,
-// 	// 		''
-// 	// 	]);
-// 	});
-// });
-
-// workerRouter.on('ready', function(service, envelope){
-// 	client.lrange(service, 0, -1, function(err, workers){
-// 		if(workers.indexOf(envelope.toString()) == -1){
-// 			client.lpush(service, envelope);
-// 		}
-// 	});
-// });
-
-
-// workerRouter.on('message', function(envelope, protocol, type, service, data){
-// 	var messages = Buffer.concat(Array.prototype.slice.call(arguments, 4));
-
-// 	if(type == workerRouter.messages.ready){
-// 		workerRouter.emit('ready', service, envelope);
-// 	}
-// 	console.log(arguments);
-// });

@@ -34,9 +34,16 @@ Worker.prototype.onDisconnect = function(message){
 
 Worker.prototype.onRequest = function(message){
 	console.log('received payload: %s', Buffer.concat(message.data).toString());
-	this.socket.send(new messages.worker.FinalMessage(message.service, JSON.stringify({
-		ping: 'pong'
-	})).toFrames());
+	var data = JSON.parse(Buffer.concat(message.data).toString());
+
+	request(data, function(err, response, body){
+		console.log(response.statusCode);
+		this.socket.send(new messages.worker.FinalMessage(message.service, JSON.stringify({
+			status: response.statusCode,
+			body: body
+		})).toFrames());
+	}.bind(this));
+
 };
 
 Worker.prototype.ready = function(){
@@ -49,9 +56,11 @@ Worker.prototype.ready = function(){
 };
 
 Worker.prototype.disconnect = function(){
-	this.socket.send(new messages.worker.DisconnectMessage().toFrames());
-	this.socket.disconnect(this.socket.last_endpoint);
-	this.connected = false;
+	if(this.connected){
+		this.socket.send(new messages.worker.DisconnectMessage().toFrames());
+		this.socket.disconnect(this.socket.last_endpoint);
+		this.connected = false;
+	}
 	//notify the broker to remove this worker from the pool
 };
 

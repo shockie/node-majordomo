@@ -10,41 +10,89 @@ var util = require('util'),
 var Broker = function(endpoint){
 	events.EventEmitter.call(this);
 	this.services = {};
-	this.waiting = [];
+	this.queue = [];
+	this.workers = 0;
 
 	this.socket = zmq.socket('router');
 	this.socket.bindSync(endpoint);
 	this.socket.on('message', this.onMessage.bind(this));
+
+	setInterval(this.dispatch.bind(this), 1);
 };
 
 util.inherits(Broker, events.EventEmitter);
+
+
+Object.defineProperty(Broker.prototype, 'available', {
+	get: function(){
+		var keys = Object.keys(this.services),
+			available = 0;
+		if(!keys.length){
+			return false;
+		}
+
+		keys.forEach(function(key){
+			available = available + this.services[key].waiting.length;
+		}, this);
+
+		return available;
+	}
+});
+
+Object.defineProperty(Broker.prototype, 'ready', {
+	get: function(){
+		return this.available > 0;
+	}
+});
 
 
 Broker.prototype.onWorkerReady = function(message, envelope){
 	console.log('Worker registers itself');
 	if(!this.services.hasOwnProperty(message.service.toString())){
 		console.log("broker doesn't yet understand %s", message.service.toString());
-		this.services[message.service.toString()] = [];
+		this.services[message.service.toString()] = {
+			waiting: [],
+			workers: 0
+		};
 	}
 
-	this.services[message.service.toString()].push(message.envelope);
+	this.services[message.service.toString()].workers++;
+	this.services[message.service.toString()].waiting.push(message.envelope);
 };
 
 Broker.prototype.onClientRequest = function(message){
-	console.log('client message');
-	if(this.services.hasOwnProperty(message.service.toString()) && this.services[message.service.toString()].length){
+	// add reqeust to queue
+	// on every tick, check workers queue if any available
+	// if available dispatch, other wise wait
+	// if request doesn't get a free worker within some period, send timeout
+
+	if(this.services.hasOwnProperty(message.service.toString())){
+		this.queue.push(message);
 		//lookup a valid worker
-		var worker = this.services[message.service.toString()].pop();
-		console.log('go to worker: %s, total idle workers: %s', worker.toString(), this.services[message.service.toString()].length);
+	}else{
+		//TODO: send MDPC_NAK
+	}
+};
+
+Broker.prototype.dispatch = function(){
+	if(this.queue.length && this.ready){
+		var message = this.queue.shift();
+		console.log(message);
+		var worker = this.services[message.service.toString()].waiting.pop();
+
+		console.log('go to worker: %s, total idle workers: %s', worker.toString(), this.available);
 		this.socket.send(new messages.worker.RequestMessage(message.envelope, message.data, worker).toFrames());
-		this.services[message.service.toString()].unshift(worker);
+		this.services[message.service.toString()].waiting.unshift(worker);
 	}
 };
 
 Broker.prototype.onWorkerFinal = function(message){
 	//worker lookup by envelope
+	//
 	var service = this.findServiceBySender(message.envelope);
 	this.socket.send(new messages.client.FinalMessage(service, message.data, message.service).toFrames());
+
+
 };
 
 Broker.prototype.onWorkerPartial = function(message){
@@ -57,7 +105,7 @@ Broker.prototype.findServiceBySender = function(sender){
 	var knownService;
 
 	Object.keys(this.services).forEach(function(service){
-		if(this.services[service].some(function(worker){
+		if(this.services[service].waiting.some(function(worker){
 			return sender.toString() == worker.toString();
 		})){
 			knownService = service;
@@ -70,9 +118,7 @@ Broker.prototype.findServiceBySender = function(sender){
 
 Broker.prototype.findIndexBySenderService = function(sender, service){
 	var knownIndex = -1;
-	this.services[service].forEach(function(worker, index){
-		console.log('LOOPING SERVICE');
-		console.log(worker.toString() == sender.toString());
+	this.services[service].waiting.forEach(function(worker, index){
 		if(worker.toString() == sender.toString()){
 			knownIndex = index;
 		}
@@ -84,7 +130,8 @@ Broker.prototype.onWorkerDisconnect = function(message){
 	var service = this.findServiceBySender(message.envelope),
 		index = this.findIndexBySenderService(message.envelope, service);
 
-	this.services[service].splice(index);
+	this.services[service].waiting.splice(index);
+	this.services[service].workers--;
 
 
 	//indexOf quirks
@@ -121,16 +168,17 @@ Broker.prototype.disconnectWorker = function(envelope){
 
 Broker.prototype.disconnect = function(){
 	console.log('disconnecting workers');
-	if(!Object.keys(this.services).length){
+	var keys = Object.keys(this.services);
+	if(!keys.length){
 		return;
 	}
 	//loop over all known workers and send a disconnect to them
-	Object.keys(this.services).forEach(function(service){
-		if(!this.services[service].length){
+	keys.forEach(function(service){
+		if(!this.services[service].workers){
 			return;
 		}
 
-		this.services[service].forEach(function(worker){
+		this.services[service].waiting.forEach(function(worker){
 			this.disconnectWorker(worker);
 		}, this);
 	}, this);

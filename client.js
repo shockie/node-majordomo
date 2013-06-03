@@ -2,6 +2,8 @@ var messages = require('./messages'),
 	zmq = require('zmq'),
 	client = zmq.socket('dealer');
 
+var requests = 0,
+	max = 30;
 
 function Client(broker){
 	this.socket = zmq.socket('dealer');
@@ -22,11 +24,11 @@ Client.prototype.onPartial = function(message){
 	console.log('partial');
 };
 Client.prototype.onFinal = function(message){
-	console.log(message);
-	message.data.forEach(function(frame){
-		console.log(frame.toString());
-	});
-	// console.log('final');
+	requests++;
+	if(requests == max){
+		console.timeEnd('10-requests');
+		process.exit();
+	}
 };
 
 Client.prototype.request = function(service, data){
@@ -35,9 +37,10 @@ Client.prototype.request = function(service, data){
 
 if(require.main){
 	var client = new Client('tcp://127.0.0.1:5555');
-	// for(var i=0; i< 10; i++){
+	console.time('10-requests');
+	for(var i=0; i< max; i++){
 		client.request('blocks:http-request', JSON.stringify({
-			url: 'http:/www.example.org/'
+			url: 'http://www.example.org/'
 		}));
-	// }
+	}
 }

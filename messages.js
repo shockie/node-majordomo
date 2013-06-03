@@ -73,17 +73,17 @@ function fromFrames(frames, hasEnvelope){
 		envelope = frames[0];
 	}
 
-	if(envelope){
-		console.log('envelope: %s', envelope.toString());
-	}
-	console.log('protocol: %s', protocol.toString());
-	console.log('type: %s', type.toString());
-	if(service){
-		console.log('service: %s', service.toString());
-	}
-	if(data){
-		console.log('data: %s (%s frames)', Buffer.concat(data).toString(), data.length);
-	}
+	// if(envelope){
+	// 	console.log('envelope: %s', envelope.toString());
+	// }
+	// console.log('protocol: %s', protocol.toString());
+	// console.log('type: %s', type.toString());
+	// if(service){
+	// 	console.log('service: %s', service.toString());
+	// }
+	// if(data){
+	// 	console.log('data: %s (%s frames)', Buffer.concat(data).toString(), data.length);
+	// }
 
 	//check if broker receives the message, offset + 1
 	if(protocol == protocols.client){

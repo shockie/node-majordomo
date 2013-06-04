@@ -7,8 +7,8 @@ var util = require('util'),
 	clientRouter = zmq.socket('router'),
 	workerRouter = zmq.socket('router');
 
-var Broker = function(endpoint){
-	events.EventEmitter.call(this);
+var Broker = exports.Broker = function Broker(endpoint){
+
 	this.services = {};
 	this.queue = [];
 	this.workers = 0;
@@ -17,11 +17,8 @@ var Broker = function(endpoint){
 	this.socket.bindSync(endpoint);
 	this.socket.on('message', this.onMessage.bind(this));
 
-	setInterval(this.dispatch.bind(this), 1);
+	setInterval(this.dispatch.bind(this), 0);
 };
-
-util.inherits(Broker, events.EventEmitter);
-
 
 Object.defineProperty(Broker.prototype, 'available', {
 	get: function(){
@@ -76,11 +73,10 @@ Broker.prototype.onClientRequest = function(message){
 
 Broker.prototype.dispatch = function(){
 	if(this.queue.length && this.ready){
-		var message = this.queue.shift();
-		console.log(message);
-		var worker = this.services[message.service.toString()].waiting.pop();
+		var message = this.queue.shift(),
+			worker = this.services[message.service.toString()].waiting.pop();
 
-		console.log('go to worker: %s, total idle workers: %s', worker.toString(), this.available);
+		// console.log('go to worker: %s, total idle workers: %s', worker.toString(), this.available);
 		this.socket.send(new messages.worker.RequestMessage(message.envelope, message.data, worker).toFrames());
 		this.services[message.service.toString()].waiting.unshift(worker);
 	}
@@ -130,7 +126,7 @@ Broker.prototype.onWorkerDisconnect = function(message){
 	var service = this.findServiceBySender(message.envelope),
 		index = this.findIndexBySenderService(message.envelope, service);
 
-	this.services[service].waiting.splice(index);
+	this.services[service].waiting.splice(index, 1);
 	this.services[service].workers--;
 
 

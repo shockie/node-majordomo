@@ -3,15 +3,17 @@ var messages = require('./messages'),
 	zmq = require('zmq');
 
 
-function Worker(endpoint, service){
+
+var Worker = exports.Worker = function Worker(options, action){
 	this.connected = false;
 	this.socket = zmq.socket('dealer');
-	this.socket.connect(endpoint);
+	this.socket.connect(options.broker);
 	this.socket.on('message', this.onMessage.bind(this));
-	this.service = service;
+	this.service = options.service;
+	this.action = action;
 
 	this.ready();
-}
+};
 
 Worker.prototype.onMessage = function(){
 	//transform incoming zmq-frames into a message
@@ -30,20 +32,15 @@ Worker.prototype.onDisconnect = function(message){
 	console.log('received disconnect request');
 	this.socket.disconnect(this.socket.last_endpoint);
 	this.connected = false;
+	process.exit();
 };
 
 Worker.prototype.onRequest = function(message){
-	console.log('received payload: %s', Buffer.concat(message.data).toString());
 	var data = JSON.parse(Buffer.concat(message.data).toString());
 
-	request(data, function(err, response, body){
-		console.log(response.statusCode);
-		this.socket.send(new messages.worker.FinalMessage(message.service, JSON.stringify({
-			status: response.statusCode,
-			body: body
-		})).toFrames());
+	this.action(data, function(err, returnValue){
+		this.socket.send(new messages.worker.FinalMessage(message.service, JSON.stringify(returnValue)).toFrames());
 	}.bind(this));
-
 };
 
 Worker.prototype.ready = function(){
@@ -65,7 +62,17 @@ Worker.prototype.disconnect = function(){
 };
 
 if(require.main){
-	var worker = new Worker('tcp://127.0.0.1:5555', 'blocks:http-request');
+	var worker = new Worker({
+		broker: 'tcp://127.0.0.1:5555',
+		service: 'blocks:http-request'
+	}, function(data, cb){
+		request(data, function(err, response, body){
+			cb(err, {
+				status: response.statusCode,
+				body: body
+			});
+		});
+	});
 	process.on('exit', function(){
 		console.log('Worker: exit');
 	});
